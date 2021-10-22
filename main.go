@@ -1,3 +1,5 @@
+// Binary co2_reader_go reads data off of a CCS811 Gas sensor
+// and exposes the data as a Prometheus-formatted HTTP endpoint.
 package main
 
 import (
