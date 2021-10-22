@@ -2,13 +2,28 @@
 
 This little applicaiton reads data off of a [CCS811 Gas sensor](https://www.sciosense.com/products/environmental-sensors/ccs811-gas-sensor-solution/) and exposes the data to a Prometheus endpoint.
 
-## Building
+## Installing
 
-    $ CGO_ENABLED=0 go build .
+```
+go get github.com/xswordsx/2co_reader_go
+```
 
 ## Running
 
-    $ ./co2_reader_go
+Current project presumptions:
+
+* The sensor runs in its default mode (address `0x5A` for the registry).
+* The sensor does _NOT_ use the `nINT` signal wire.
+
+```
+$ ./co2_reader_go
+```
+
+## Building locally
+
+```
+$ go get ./... && go build .
+```
 
 ## License
 
