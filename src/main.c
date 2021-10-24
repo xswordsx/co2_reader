@@ -1,18 +1,18 @@
 #include <bits/stdint-uintn.h>
+#include <endian.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
 #include <time.h>
-#include <endian.h>
+#include <unistd.h>
 
-#include <linux/i2c-dev.h>
-#include "CCS811.h"
 #include "./ccs881.c"
+#include "CCS811.h"
+#include <linux/i2c-dev.h>
 
 #ifdef _DEBUG_
 #define DEBUG_PRINTF(X...) printf(X)
@@ -20,13 +20,13 @@
 #define DEBUG_PRINTF(X...)
 #endif
 
-#define print_bits(x)                                            \
-  do {                                                           \
-    unsigned long long a__ = (x);                                \
-    size_t bits__ = sizeof(x) * 8;                               \
-    while (bits__--) putchar(a__ &(1ULL << bits__) ? '1' : '0'); \
-  } while (0)
-
+#define print_bits(x)                                                                              \
+	do {                                                                                           \
+		unsigned long long a__ = (x);                                                              \
+		size_t			   bits__ = sizeof(x) * 8;                                                 \
+		while (bits__--)                                                                           \
+			putchar(a__ &(1ULL << bits__) ? '1' : '0');                                            \
+	} while (0)
 
 /// This structure is a copy of the memory layout of the
 /// response from CCS881's ALG_RESULT_DATA call.
@@ -35,13 +35,13 @@
 typedef struct {
 	uint16_t eco2;
 	uint16_t tvoc;
-	uint8_t  status;
-	uint8_t  error_id;
+	uint8_t	 status;
+	uint8_t	 error_id;
 	uint16_t raw_data;
 } ccs811_measurement_t;
 
-int file      = 0;
-int looping   = 1;
+int file = 0;
+int looping = 1;
 int data_wait = 1;
 
 // READ_MODE defines the way the sensor will aggregate data.
@@ -55,7 +55,7 @@ int data_wait = 1;
 const uint8_t READ_MODE = (CCS811_MODE_10SEC << 4);
 
 /// Populate the passed buffer with the current time as an RFC3339 string.
-static char* gettime(char* buf)  {
+static char *gettime(char *buf) {
 	// Preumption is that the buffer is able to hold a string
 	// of type "YYYY-MM-DDTHH:mm:ss.000Z" (24 chars) and a
 	// termination character.
@@ -91,7 +91,7 @@ int main() {
 
 	// Try to acquire I2C for read/writes.
 	{
-		const char* filename = "/dev/i2c-0";
+		const char *filename = "/dev/i2c-0";
 		DEBUG_PRINTF("Opening '%s' for read/writes ... ", filename);
 		file = open(filename, O_RDWR);
 		if (file < 0) {
@@ -111,7 +111,7 @@ int main() {
 	// Reset the device
 	{
 		DEBUG_PRINTF("Resetting the sensor ... ");
-		uint8_t const cmd_sw_reset[5] = {CCS811_SW_RESET,0x11,0xE5,0x72,0x8A};
+		uint8_t const cmd_sw_reset[5] = {CCS811_SW_RESET, 0x11, 0xE5, 0x72, 0x8A};
 		if ((ok = write(file, cmd_sw_reset, 5)) != 5) {
 			printf("Resetting the sensor failed: %s (write: %d)\n", strerror(errno), ok);
 			goto abort_close;
@@ -133,7 +133,6 @@ int main() {
 			goto abort_close;
 		}
 		DEBUG_PRINTF("OK\n");
-
 	}
 
 	// Run some basic checks
@@ -162,7 +161,7 @@ int main() {
 		cmd = CCS811_STATUS;
 		write(file, &cmd, 1);
 		read(file, &status_out, 1);
-		if ((status_out&0b00010000) == 0) {
+		if ((status_out & 0b00010000) == 0) {
 			printf("no valid firmware\n");
 			goto abort_close;
 		}
@@ -182,7 +181,7 @@ int main() {
 		cmd = CCS811_STATUS;
 		write(file, &cmd, 1);
 		read(file, &status_out, 1);
-		if ((status_out&0b10000000) == 0) {
+		if ((status_out & 0b10000000) == 0) {
 			printf("still in firmware mode\n");
 			goto abort_close;
 		}
@@ -211,10 +210,10 @@ int main() {
 		}
 
 		DEBUG_PRINTF("Measurement mode is: ");
-		#ifdef _DEBUG_
+#ifdef _DEBUG_
 		print_bits(status_out);
 		printf("\n");
-		#endif
+#endif
 	}
 
 	printf("Check for errors ... ");
@@ -225,8 +224,8 @@ int main() {
 	}
 	uint8_t err = 0;
 	if (read(file, &err, 1) != 1) {
-			printf("cannot read: %s\n", strerror(errno));
-			goto abort_close;
+		printf("cannot read: %s\n", strerror(errno));
+		goto abort_close;
 	}
 	if (err != 0) {
 		printf("Error raised: ");
@@ -238,11 +237,11 @@ int main() {
 	}
 
 	DEBUG_PRINTF("Starting data loop\n");
-	while(looping) {
+	while (looping) {
 
 		// Always wait for data :)
 		DEBUG_PRINTF("[%s] Waiting for data\n", gettime(timebuf));
-		while(data_wait) {
+		while (data_wait) {
 			cmd = CCS811_STATUS;
 			if ((ok = write(file, &cmd, 1)) != 1) {
 				printf("cannot request read: %s (write: %d)\n", strerror(errno), ok);
@@ -283,12 +282,11 @@ int main() {
 			data.eco2 = be16toh(data.eco2);
 			data.tvoc = be16toh(data.tvoc);
 
-			if( !(data.status & 0x90) ) {
+			if (!(data.status & 0x90)) {
 				printf("ccs811: Not in app mode, or no valid app: ");
 				print_bits(data.status);
 				goto abort_close;
 			}
-
 
 			gettime(timebuf);
 			// printf(
@@ -308,7 +306,7 @@ int main() {
 
 	// Cleanup
 	close(file);
-	return(EXIT_SUCCESS);
+	return EXIT_SUCCESS;
 
 abort_close:
 	close(file);

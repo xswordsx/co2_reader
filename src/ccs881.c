@@ -7,8 +7,10 @@
 #ifndef _I2C_CCS881_HELPERS_
 #define _I2C_CCS881_HELPERS_
 
-#include <bits/stdint-uintn.h>
 #include "CCS811.h"
+#include <bits/stdint-uintn.h>
+
+// clang-format off
 
 int hardware_id(int fd) {
 	uint8_t out = CCS811_HW_ID;
