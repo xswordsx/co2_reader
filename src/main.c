@@ -9,10 +9,14 @@
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "./ccs881.c"
 #include "CCS811.h"
 #include <linux/i2c-dev.h>
+
+#include "./types.h"
+#include "./prom.c"
 
 #ifdef _DEBUG_
 #define DEBUG_PRINTF(X...) printf(X)
@@ -28,19 +32,10 @@
 			putchar(a__ &(1ULL << bits__) ? '1' : '0');                                            \
 	} while (0)
 
-/// This structure is a copy of the memory layout of the
-/// response from CCS881's ALG_RESULT_DATA call.
-/// NOTICE: Since the sensor uses big-endians the data
-/// will need re-ordering after read.
-typedef struct {
-	uint16_t eco2;
-	uint16_t tvoc;
-	uint8_t	 status;
-	uint8_t	 error_id;
-	uint16_t raw_data;
-} ccs811_measurement_t;
+// Global variables for easier clean-ups.
 
-int file = 0;
+int device_fd = 0;
+int sock_fd = 0;
 int looping = 1;
 int data_wait = 1;
 
@@ -86,15 +81,29 @@ int main() {
 	int ok;
 	// data is the output buffer for CCS811_ALG_RESULT_DATA calls.
 	ccs811_measurement_t data;
+	// Set sane defaults.
+	data.eco2 = 400;
+	data.tvoc = 0;
 	// timebuf is a buffer for pretty-printing timestamps.
 	char timebuf[80] = {0};
+
+	http_thread_args http_args;
+	http_args.running = &looping;
+	http_args.sensor_data = &data;
+	http_args.sock_fd = &sock_fd;
+	http_args.address = "0.0.0.0";
+	http_args.port = 2112;
+
+	pthread_t http_thread;
+    pthread_create(&http_thread, NULL, listen_and_serve, (void *)(&http_args));
+    // pthread_join(http_thread, NULL);
 
 	// Try to acquire I2C for read/writes.
 	{
 		const char *filename = "/dev/i2c-0";
 		DEBUG_PRINTF("Opening '%s' for read/writes ... ", filename);
-		file = open(filename, O_RDWR);
-		if (file < 0) {
+		device_fd = open(filename, O_RDWR);
+		if (device_fd < 0) {
 			printf("Error with open()!: %s\n", strerror(errno));
 			exit(1);
 		}
@@ -103,7 +112,7 @@ int main() {
 
 	// Set communication address
 	const int addr = CCS811_SLAVEADDR_0;
-	if (ioctl(file, I2C_SLAVE, addr) < 0) {
+	if (ioctl(device_fd, I2C_SLAVE, addr) < 0) {
 		printf("Error with ioctl()!: %s\n", strerror(errno));
 		goto abort_close;
 	}
@@ -112,7 +121,7 @@ int main() {
 	{
 		DEBUG_PRINTF("Resetting the sensor ... ");
 		uint8_t const cmd_sw_reset[5] = {CCS811_SW_RESET, 0x11, 0xE5, 0x72, 0x8A};
-		if ((ok = write(file, cmd_sw_reset, 5)) != 5) {
+		if ((ok = write(device_fd, cmd_sw_reset, 5)) != 5) {
 			printf("Resetting the sensor failed: %s (write: %d)\n", strerror(errno), ok);
 			goto abort_close;
 		}
@@ -124,11 +133,11 @@ int main() {
 	{
 		DEBUG_PRINTF("Reading status_out ... ");
 		cmd = CCS811_STATUS;
-		if ((ok = write(file, &cmd, 1)) != 1) {
+		if ((ok = write(device_fd, &cmd, 1)) != 1) {
 			printf("cannot request read: %s (write: %d)\n", strerror(errno), ok);
 			goto abort_close;
 		}
-		if (read(file, &status_out, 1) != 1) {
+		if (read(device_fd, &status_out, 1) != 1) {
 			printf("cannot read: %s\n", strerror(errno));
 			goto abort_close;
 		}
@@ -143,10 +152,10 @@ int main() {
 			goto abort_close;
 		}
 
-		const int hwid = hardware_id(file);
-		const int hwv = hardware_version(file);
-		const int bl = bootloader_version(file);
-		const int app = application_version(file);
+		const int hwid = hardware_id(device_fd);
+		const int hwv = hardware_version(device_fd);
+		const int bl = bootloader_version(device_fd);
+		const int app = application_version(device_fd);
 
 		if (hwid != 0x81) {
 			printf("Uknown hardware id: 0x%x", hwid);
@@ -159,8 +168,8 @@ int main() {
 		printf("application version:\t0x%x\t(%d)\n", app, app);
 
 		cmd = CCS811_STATUS;
-		write(file, &cmd, 1);
-		read(file, &status_out, 1);
+		write(device_fd, &cmd, 1);
+		read(device_fd, &status_out, 1);
 		if ((status_out & 0b00010000) == 0) {
 			printf("no valid firmware\n");
 			goto abort_close;
@@ -171,7 +180,7 @@ int main() {
 	{
 		DEBUG_PRINTF("Starting sensor in app mode ...");
 		cmd = CCS811_APP_START;
-		if (write(file, &cmd, 1) != 1) {
+		if (write(device_fd, &cmd, 1) != 1) {
 			printf("cannot enable app mode: %s\n", strerror(errno));
 			goto abort_close;
 		}
@@ -179,8 +188,8 @@ int main() {
 		usleep(CCS811_WAIT_AFTER_APPSTART_US);
 
 		cmd = CCS811_STATUS;
-		write(file, &cmd, 1);
-		read(file, &status_out, 1);
+		write(device_fd, &cmd, 1);
+		read(device_fd, &status_out, 1);
 		if ((status_out & 0b10000000) == 0) {
 			printf("still in firmware mode\n");
 			goto abort_close;
@@ -192,7 +201,7 @@ int main() {
 		DEBUG_PRINTF("Setting measurement mode ... ");
 
 		uint8_t const meas_cmd[2] = {CCS811_MEAS_MODE, READ_MODE};
-		if (write(file, meas_cmd, 2) != 2) {
+		if (write(device_fd, meas_cmd, 2) != 2) {
 			printf("cannot set measurement mode: %s\n", strerror(errno));
 			goto abort_close;
 		}
@@ -200,11 +209,11 @@ int main() {
 
 		// Verify that it's set
 		cmd = CCS811_MEAS_MODE;
-		if (write(file, &cmd, 1) != 1) {
+		if (write(device_fd, &cmd, 1) != 1) {
 			printf("cannot request measurement mode: %s\n", strerror(errno));
 			goto abort_close;
 		}
-		if (read(file, &status_out, 1) != 1) {
+		if (read(device_fd, &status_out, 1) != 1) {
 			printf("cannot read: %s\n", strerror(errno));
 			goto abort_close;
 		}
@@ -218,12 +227,12 @@ int main() {
 
 	printf("Check for errors ... ");
 	cmd = CCS811_ERROR_ID;
-	if (write(file, &cmd, 1) != 1) {
+	if (write(device_fd, &cmd, 1) != 1) {
 		printf("failed reading error: %s\n", strerror(errno));
 		goto abort_close;
 	}
 	uint8_t err = 0;
-	if (read(file, &err, 1) != 1) {
+	if (read(device_fd, &err, 1) != 1) {
 		printf("cannot read: %s\n", strerror(errno));
 		goto abort_close;
 	}
@@ -243,11 +252,11 @@ int main() {
 		DEBUG_PRINTF("[%s] Waiting for data\n", gettime(timebuf));
 		while (data_wait) {
 			cmd = CCS811_STATUS;
-			if ((ok = write(file, &cmd, 1)) != 1) {
+			if ((ok = write(device_fd, &cmd, 1)) != 1) {
 				printf("cannot request read: %s (write: %d)\n", strerror(errno), ok);
 				goto abort_close;
 			}
-			if (read(file, &status_out, 1) != 1) {
+			if (read(device_fd, &status_out, 1) != 1) {
 				printf("cannot read: %s\n", strerror(errno));
 				goto abort_close;
 			}
@@ -269,11 +278,11 @@ int main() {
 			memset(&data, 0, sizeof(ccs811_measurement_t));
 
 			cmd = CCS811_ALG_RESULT_DATA;
-			if (write(file, &cmd, 1) != 1) {
+			if (write(device_fd, &cmd, 1) != 1) {
 				printf("failed requesting algorithm data: %s\n", strerror(errno));
 				goto abort_close;
 			}
-			if (read(file, &data, 8) < 5) {
+			if (read(device_fd, &data, 8) < 5) {
 				printf("failed reading algorithm data: %s\n", strerror(errno));
 				goto abort_close;
 			}
@@ -305,10 +314,12 @@ int main() {
 	}
 
 	// Cleanup
-	close(file);
+	close(device_fd);
+	close(sock_fd);
 	return EXIT_SUCCESS;
 
 abort_close:
-	close(file);
+	close(device_fd);
+	close(sock_fd);
 	exit(errno);
 }
