@@ -23,7 +23,7 @@ $ ./build/co2_reader
 
 ## License
 
-This project is [licensed](./LICENSE) under the [MIT license](https://mit-license.org/)
+This project is licensed under the [MIT license](https://mit-license.org/)
 
 ## Issues
 
