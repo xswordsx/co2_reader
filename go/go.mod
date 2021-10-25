@@ -1,4 +1,4 @@
-module github.com/xswordsx/co2_reader_go
+module github.com/xswordsx/co2_reader/go
 
 go 1.17
 

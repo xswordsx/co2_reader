@@ -5,7 +5,7 @@ This little applicaiton reads data off of a [CCS811 Gas sensor](https://www.scio
 ## Installing
 
 ```
-go get github.com/xswordsx/2co_reader_go
+go get github.com/xswordsx/2co_reader/go
 ```
 
 ## Running
@@ -31,4 +31,4 @@ This project is licensed under the [MIT license](https://mit-license.org/)
 
 ## Issues
 
-Use the repository [issues board](https://github.com/xswordsx/co2_reader_go/issues)
+Use the repository [issues board](https://github.com/xswordsx/co2_reader/issues)
